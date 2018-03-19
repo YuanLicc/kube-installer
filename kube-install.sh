@@ -10,10 +10,10 @@
 CAIP=120.78.220.145 # 选定一个服务器作为我们安装集群的操作服务器，意味着我们将在此机器上执行命令来搭建集群，1 生成TLS证书 2 运行命令搭建集群（无论你在什么环境下，请确保此ip能被其他服务器访问，因为我们将执行命令从此服务器复制配置到其它服务器）
 INSTALLER_DIR=/usr/local/installer # 安装包存储文件夹,请不要再最后加‘/’符号
 ALL_IPS=("120.77.171.82" "111.230.227.12") # 除当前执行脚本外的主机ip集合（即集群内所有主机ip出去当前执行安装的主机ip），我们将对这些服务器进行ssh免密操作，以免频繁输入密码
-ALL_IPS_PWD=("yongYUANaiLxP222" "yongYUANaiLxP222") # 上一项对应的密码
+ALL_IPS_PWD=("***" "***") # 上一项对应的密码
 ALL_IPS_NAME=("etcd-two" "etcd-three") # 与上两项对应的，请填写名称，将在后续替换ETCD_NAME配置项
 ALL_NODE_IP=("120.77.171.82" "111.230.227.12")
-ALL_NODE_PWD=("yongYUANaiLxP222" "yongYUANaiLxP222")
+ALL_NODE_PWD=("***" "***")
 MASTER_AND_ETCD_IP=\"120.78.220.145\" # master集群与etcd集群的所有IP集合,以逗号隔开
 
 # CFSSl配置项(cfssl是一个TLS证书的生成工具)
@@ -31,7 +31,8 @@ ETCD_CLUSTER_TOKEN=etcd # 当前etcd集群的token，理解为etcd集群唯一�
 ETCD_DATA_DIR=/var/lib/etcd/ # etcd数据存放路径
 ETCD_LISTEN_IP=172.18.250.166 # 当前部署的机器IP
 ETCD_IPS="\"172.18.250.166\"" # etcd 集群所有机器IP
-ETCD_NODES=etcd=https://172.18.250.166:2380 # etcd集群间通信的IP和端口
+ETCD_NODES=etcd=https://172.18.250.166:2380 # etcd集群间通信的IP和端口,以逗号隔开
+ETCD_SERVERS=https://172.18.250.166:2380 #上一项出去name，以逗号隔开
 ETCD_IPP=() # etcd 集群机器的IP，除开CAIP
 ETCD_IPP_PWD=()
 ETCD_VERSION=v3.1.10
@@ -45,8 +46,211 @@ KUBE_VERSION=v1.6.0 # kubernetes版本
 KUBE_API_SERVER=172.18.250.166:8080 # kubernetes API server
 KUBE_CLIENT_DOWNLOAD_URL=https://dl.k8s.io/v1.6.0/kubernetes-client-linux-amd64.tar.gz # kubernetes客户端下载地址
 KUBE_CLIENT_INSTALLER_NAME=kubernetes-client-linux-amd64.tar.gz # kubernetes客户端下载文件名
-KUBE_CLIENT_UNZIP_NAME=kubernetes # kubernetes客户端加压后文件夹名
+KUBE_CLIENT_UNZIP_NAME=kubernetes # kubernetes客户端解压后文件夹名
 KUBE_CLIENT_EXECUTABLE_REGULAR=kubernetes/client/bin/kube* # kubernetes客户端可执行程序模糊表达式
+KUBE_SERVER_DOWNLOAD_URL=https://dl.k8s.io/v1.6.0/kubernetes-server-linux-amd64.tar.gz # kubernetes服务端下载地址
+KUBE_SERVER_INSTALLER_NAME=kubernetes-server-linux-amd64.tar.gz # kubernetes服务端下载文件名
+KUBE_SERVER_UNZIP_NAME=kubernetes # kubernetes服务端解压后文件夹名
+KUBE_SERVER_EXECUTABLE_REGULAR=kubernetes/server/bin/{kube-apiserver,kube-controller-manager,kube-scheduler,kubectl,kube-proxy,kubelet} # kubernetes服务端可执行程序模糊表达式
+
+# master配置项
+KUBE_MASTER_ADDRESS=172.18.250.166 # 当前master节点监听的ip地址
+KUBE_API_PORT=8080 # 当前master监听端口
+KUBELET_PORT=10250 # kubelet端口
+KUBE_MASTERS=() # master集群ip集合，除去当前机器ip，当前机器会默认为一个master节点
+
+start_master_cluster() {
+  start_master
+  i=0
+  while [ $i -lt ${#KUBE_MASTERS[@]} ] 
+  do
+    print_time_and_string "机器：${KUBE_MASTERS[$i]}，启动master"
+    ssh root@${KUBE_MASTERS[$i]} <<remotessh
+      ./kube-install.sh start_master
+    exit
+remotessh
+    let i++  
+  done 
+}
+
+start_master() {
+
+  systemctl daemon-reload
+
+  print_time_and_string "启动kube-apiserver"
+  systemctl stop kube-apiserver
+  systemctl enable kube-apiserver
+  systemctl start kube-apiserver
+
+  print_time_and_string "启动kube-controller-manager"
+  systemctl stop kube-controller-manager
+  systemctl enable kube-controller-manager
+  systemctl start kube-controller-manager
+
+  print_time_and_string "启动kube-scheduler"
+  systemctl stop kube-scheduler
+  systemctl enable kube-scheduler
+  systemctl start kube-scheduler
+}
+
+install_master_cluster() {
+  i=0
+  while [ $i -lt ${#KUBE_MASTERS[@]} ] 
+  do
+    print_time_and_string "机器：${KUBE_MASTERS[$i]}，安装master"
+    ssh root@${KUBE_MASTERS[$i]} <<remotessh
+      ./kube-install.sh install-master
+    exit
+remotessh
+    let i++  
+  done
+}
+
+master_config() {
+  print_time_and_string "配置master"
+  print_time_and_string "生成/usr/lib/systemd/system/kube-apiserver.service文件"
+  cat > /usr/lib/systemd/system/kube-apiserver.service <<EOF
+[Unit]
+Description=Kubernetes API Service
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+After=network.target
+After=etcd.service
+
+[Service]
+ExecStart=/usr/local/bin/kube-apiserver\\
+--logtostderr=true\\
+--v=0\\
+--etcd-servers=${ETCD_SERVERS}\\
+--advertise-address=${KUBE_MASTER_ADDRESS}\\
+--bind-address=${KUBE_MASTER_ADDRESS}\\
+--insecure-bind-address=${KUBE_MASTER_ADDRESS}\\
+--insecure-port=$KUBE_API_PORT\\
+--kubelet-port=$KUBELET_PORT\\
+--allow-privileged=true\\
+--service-cluster-ip-range=10.254.0.0/16\\
+--admission-control=ServiceAccount,NamespaceLifecycle,NamespaceExists,LimitRanger,ResourceQuota\\
+--authorization-mode=RBAC\\
+--runtime-config=rbac.authorization.k8s.io/v1beta1\\
+--kubelet-https=true\\
+--experimental-bootstrap-token-auth\\
+--token-auth-file=/etc/kubernetes/token.csv\\
+--service-node-port-range=10250-32767\\
+--tls-cert-file=/etc/kubernetes/ssl/kubernetes.pem\\
+--tls-private-key-file=/etc/kubernetes/ssl/kubernetes-key.pem\\
+--client-ca-file=/etc/kubernetes/ssl/ca.pem\\
+--service-account-key-file=/etc/kubernetes/ssl/ca-key.pem\\
+--etcd-cafile=/etc/kubernetes/ssl/ca.pem\\
+--etcd-certfile=/etc/kubernetes/ssl/kubernetes.pem\\
+--etcd-keyfile=/etc/kubernetes/ssl/kubernetes-key.pem\\
+--enable-swagger-ui=true\\
+--apiserver-count=3\\
+--audit-log-maxage=30\\
+--audit-log-maxbackup=3\\
+--audit-log-maxsize=100\\
+--audit-log-path=/var/lib/audit.log\\
+--event-ttl=1h
+Restart=on-failure
+Type=notify
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+cat /usr/lib/systemd/system/kube-apiserver.service
+
+  print_time_and_string "生成/usr/lib/systemd/system/kube-controller-manager.service文件"
+  cat > /usr/lib/systemd/system/kube-controller-manager.service <<EOF
+[Unit]
+Description=Kubernetes Controller Manager
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+
+[Service]
+EnvironmentFile=-/etc/kubernetes/config
+EnvironmentFile=-/etc/kubernetes/controller-manager
+ExecStart=/usr/local/bin/kube-controller-manager\\
+--logtostderr=true\\
+--v=0\\
+--master=${KUBE_MASTER_ADDRESS}:${KUBE_API_PORT}\\
+--address=127.0.0.1\\
+--service-cluster-ip-range=10.254.0.0/16\\
+--cluster-name=kubernetes\\
+--cluster-signing-cert-file=/etc/kubernetes/ssl/ca.pem\\
+--cluster-signing-key-file=/etc/kubernetes/ssl/ca-key.pem\\
+--service-account-private-key-file=/etc/kubernetes/ssl/ca-key.pem\\
+--root-ca-file=/etc/kubernetes/ssl/ca.pem\\
+--leader-elect=true
+Restart=on-failure
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+cat /usr/lib/systemd/system/kube-controller-manager.service
+
+  print_time_and_string "生成/usr/lib/systemd/system/kube-scheduler.service文件"
+  cat > /usr/lib/systemd/system/kube-scheduler.service <<EOF
+[Unit]
+Description=Kubernetes Scheduler Plugin
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-scheduler\\
+--logtostderr=true\\
+--v=0\\
+--master=${KUBE_MASTER_ADDRESS}:${KUBE_API_PORT}\\
+--leader-elect=true\\
+--address=127.0.0.1
+Restart=on-failure
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+cat /usr/lib/systemd/system/kube-scheduler.service
+}
+
+install_master() {
+  print_time_and_string "安装master"
+
+  print_time_and_string "删除当前目录下安装包、解压后文件夹"
+  rm -rf $KUBE_SERVER_INSTALLER_NAME
+  rm -rf $KUBE_SERVER_UNZIP_NAME
+
+  print_time_and_string "判断kubernetes服务端安装包$INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME是否存在"
+  check_file_exit "$INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME"
+  isExit=$?
+  if [ "$isExit" != "1" ]; then
+    print_time_and_string "检测到kubernetes服务端安装包$INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME不存在，进行下载"
+    download_wget $KUBE_SERVER_DOWNLOAD_URL
+
+    print_time_and_string "检测到kubernetes服务端安装包是否成功下载"
+    check_file_exit $KUBE_SERVER_INSTALLER_NAME
+    isDownload=$?
+    if [ "$isDownload" != "1" ]; then
+      print_time_and_string "检测到kubernetes服务端安装包未下载成功"
+      exit
+    else
+      print_time_and_string "检测到kubernetes服务端安装包下载成功，移动安装包到$INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME"
+      mv $KUBE_SERVER_INSTALLER_NAME $INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME
+    fi
+  else
+    print_time_and_string "检测到本地包含kubernetes安装包$INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME，跳过下载"
+  fi
+
+  print_time_and_string "解压安装包$INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME"
+  tar -zxvf $INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME
+
+  print_time_and_string "解压子包kubernetes-src.tar.gz"
+  cd kubernetes
+  tar -zxvf kubernetes-src.tar.gz
+  cd ..
+
+  print_time_and_string "将$KUBE_SERVER_EXECUTABLE_REGULAR移动到/usr/local/bin文件夹下"
+  cp -r $KUBE_SERVER_EXECUTABLE_REGULAR /usr/local/bin
+  
+  print_time_and_string "安装完成，开始配置"
+  master_config
+}
 
 # 安装etcd
 install_etcd() {
@@ -414,6 +618,9 @@ distribute_shell() {
     cp kube-install.sh /root/
     sed -i "s/^ETCD_NAME=$ETCD_NAME/ETCD_NAME=${ALL_IPS_NAME[$i]}/g" /root/kube-install.sh # 修改ETCD_LISTEN_IP配置
     sed -i "s/^ETCD_LISTEN_IP=$ETCD_LISTEN_IP/ETCD_LISTEN_IP=${ALL_IPS[$i]}/g" /root/kube-install.sh # 修改ETCD_LISTEN_IP配置
+    sed -i "46c KUBE_API_SERVER=${ALL_IPS[$i]}:8080 # kubernetes API server" /root/kube-install.sh
+    sed -i "57c KUBE_MASTER_ADDRESS=${ALL_IPS[$i]} # 当前master节点监听的ip地址" /root/kube-install.sh
+    
     print_time_and_string "脚本文件复制到${ALL_IPS[$i]}"
     sshpass -p ${ALL_IPS_PWD[$i]} scp -r /root/kube-install.sh root@${ALL_IPS[$i]}:/root/
     rm -rf /root/kube-install.sh
@@ -648,22 +855,22 @@ Documentation=https://github.com/coreos
 [Service]
 Type=notify
 WorkingDirectory=/var/lib/etcd/
-ExecStart=/usr/local/bin/etcd \\
-  --name=${ETCD_NAME} \\
-  --cert-file=/etc/kubernetes/ssl/kubernetes.pem \\
-  --key-file=/etc/kubernetes/ssl/kubernetes-key.pem \\
-  --peer-cert-file=/etc/kubernetes/ssl/kubernetes.pem \\
-  --peer-key-file=/etc/kubernetes/ssl/kubernetes-key.pem \\
-  --trusted-ca-file=/etc/kubernetes/ssl/ca.pem \\
-  --peer-trusted-ca-file=/etc/kubernetes/ssl/ca.pem \\
-  --initial-advertise-peer-urls=https://${ETCD_LISTEN_IP}:2380 \\
-  --listen-peer-urls=https://${ETCD_LISTEN_IP}:2380 \\
-  --listen-client-urls=https://${ETCD_LISTEN_IP}:2379,http://127.0.0.1:2379 \\
-  --advertise-client-urls=https://${ETCD_LISTEN_IP}:2379 \\
-  --initial-cluster-token=${ETCD_CLUSTER_TOKEN} \\
-  --initial-cluster=${ETCD_NODES} \\
-  --initial-cluster-state=new \\
-  --data-dir=${ETCD_DATA_DIR}
+ExecStart=/usr/local/bin/etcd\\
+--name=${ETCD_NAME}\\
+--cert-file=/etc/kubernetes/ssl/kubernetes.pem\\
+--key-file=/etc/kubernetes/ssl/kubernetes-key.pem\\
+--peer-cert-file=/etc/kubernetes/ssl/kubernetes.pem\\
+--peer-key-file=/etc/kubernetes/ssl/kubernetes-key.pem\\
+--trusted-ca-file=/etc/kubernetes/ssl/ca.pem\\
+--peer-trusted-ca-file=/etc/kubernetes/ssl/ca.pem\\
+--initial-advertise-peer-urls=https://${ETCD_LISTEN_IP}:2380\\
+--listen-peer-urls=https://${ETCD_LISTEN_IP}:2380\\
+--listen-client-urls=https://${ETCD_LISTEN_IP}:2379,http://127.0.0.1:2379\\
+--advertise-client-urls=https://${ETCD_LISTEN_IP}:2379\\
+--initial-cluster-token=${ETCD_CLUSTER_TOKEN}\\
+--initial-cluster=${ETCD_NODES}\\
+--initial-cluster-state=new\\
+--data-dir=${ETCD_DATA_DIR}
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
@@ -755,13 +962,6 @@ validate_etcd() {
   etcdctl --endpoints=https://${ETCD_LISTEN_IP}:2379 --ca-file=/etc/kubernetes/ssl/ca.pem --cert-file=/etc/kubernetes/ssl/kubernetes.pem --key-file=/etc/kubernetes/ssl/kubernetes-key.pem cluster-health
 }
 
-# 安装k8s
-install_k8s() {
-  mkdir -p /root/k8s/rpm
-  mv 1.9.0/* /root/k8s/rpm/
-  yum install /root/k8s/rpm/*.rpm -y
-}
-
 case "$1" in
   "init")
     init
@@ -818,6 +1018,18 @@ case "$1" in
     ;;
   "validate-etcd")
     validate_etcd
+    ;;
+  "install-master")
+    install_master
+    ;;
+  "install-master-cluster")
+    install_master_cluster
+    ;;
+  "start-master")
+    start_master
+    ;;
+  "start-master-cluster")
+    start_master_cluster
     ;;
   "scp-shell")
     distribute_shell
