@@ -35,15 +35,15 @@ ETCD_NODES=etcd=https://172.18.250.166:2380 # etcd集群间通信的IP和端口,
 ETCD_SERVERS=https://172.18.250.166:2380 #上一项出去name，以逗号隔开
 ETCD_IPP=() # etcd 集群机器的IP，除开CAIP
 ETCD_IPP_PWD=()
-ETCD_VERSION=v3.1.10
-ETCD_DOWNLOAD_URL=http://github.com/coreos/etcd/releases/download/v3.1.10/etcd-v3.1.10-linux-amd64.tar.gz
-ETCD_INSTALLER_NAME=etcd-v3.1.10-linux-amd64.tar.gz
-ETCD_UNZIP_NAME=etcd-v3.1.10-linux-amd64 # etcd加压后文件夹名
-ETCD_EXECUTABLE_REGULAR=etcd-v3.1.10-linux-amd64/etcd* # etcd可执行程序模糊表达式
+ETCD_VERSION=v3.1.5
+ETCD_DOWNLOAD_URL=http://github.com/coreos/etcd/releases/download/v3.1.5/etcd-v3.1.5-linux-amd64.tar.gz
+ETCD_INSTALLER_NAME=etcd-v3.1.5-linux-amd64.tar.gz
+ETCD_UNZIP_NAME=etcd-v3.1.5-linux-amd64 # etcd加压后文件夹名
+ETCD_EXECUTABLE_REGULAR=etcd-v3.1.5-linux-amd64/etcd* # etcd可执行程序模糊表达式
 
 # kubernetes配置项
 KUBE_VERSION=v1.6.0 # kubernetes版本
-KUBE_API_SERVER=172.18.250.166:8080 # kubernetes API server
+KUBE_API_SERVER=172.18.250.166:6443 # kubernetes API server
 KUBE_CLIENT_DOWNLOAD_URL=https://dl.k8s.io/v1.6.0/kubernetes-client-linux-amd64.tar.gz # kubernetes客户端下载地址
 KUBE_CLIENT_INSTALLER_NAME=kubernetes-client-linux-amd64.tar.gz # kubernetes客户端下载文件名
 KUBE_CLIENT_UNZIP_NAME=kubernetes # kubernetes客户端解压后文件夹名
@@ -51,7 +51,7 @@ KUBE_CLIENT_EXECUTABLE_REGULAR=kubernetes/client/bin/kube* # kubernetes客户端
 KUBE_SERVER_DOWNLOAD_URL=https://dl.k8s.io/v1.6.0/kubernetes-server-linux-amd64.tar.gz # kubernetes服务端下载地址
 KUBE_SERVER_INSTALLER_NAME=kubernetes-server-linux-amd64.tar.gz # kubernetes服务端下载文件名
 KUBE_SERVER_UNZIP_NAME=kubernetes # kubernetes服务端解压后文件夹名
-KUBE_SERVER_EXECUTABLE_REGULAR=kubernetes/server/bin/{kube-apiserver,kube-controller-manager,kube-scheduler,kubectl,kube-proxy,kubelet} # kubernetes服务端可执行程序模糊表达式
+KUBE_SERVER_EXECUTABLE_REGULAR=kubernetes/server/bin/kube* # kubernetes服务端可执行程序模糊表达式
 
 # master配置项
 KUBE_MASTER_ADDRESS=172.18.250.166 # 当前master节点监听的ip地址
@@ -94,6 +94,7 @@ start_master() {
 }
 
 install_master_cluster() {
+  install_master
   i=0
   while [ $i -lt ${#KUBE_MASTERS[@]} ] 
   do
@@ -232,6 +233,7 @@ install_master() {
     else
       print_time_and_string "检测到kubernetes服务端安装包下载成功，移动安装包到$INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME"
       mv $KUBE_SERVER_INSTALLER_NAME $INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME
+      chmod 777 $INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME
     fi
   else
     print_time_and_string "检测到本地包含kubernetes安装包$INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME，跳过下载"
@@ -240,14 +242,11 @@ install_master() {
   print_time_and_string "解压安装包$INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME"
   tar -zxvf $INSTALLER_DIR/$KUBE_VERSION-$KUBE_SERVER_INSTALLER_NAME
 
-  print_time_and_string "解压子包kubernetes-src.tar.gz"
-  cd kubernetes
-  tar -zxvf kubernetes-src.tar.gz
-  cd ..
-
+  chmod 777 $KUBE_SERVER_UNZIP_NAME
   print_time_and_string "将$KUBE_SERVER_EXECUTABLE_REGULAR移动到/usr/local/bin文件夹下"
   cp -r $KUBE_SERVER_EXECUTABLE_REGULAR /usr/local/bin
   
+  rm -rf $KUBE_SERVER_UNZIP_NAME
   print_time_and_string "安装完成，开始配置"
   master_config
 }
@@ -618,7 +617,7 @@ distribute_shell() {
     cp kube-install.sh /root/
     sed -i "s/^ETCD_NAME=$ETCD_NAME/ETCD_NAME=${ALL_IPS_NAME[$i]}/g" /root/kube-install.sh # 修改ETCD_LISTEN_IP配置
     sed -i "s/^ETCD_LISTEN_IP=$ETCD_LISTEN_IP/ETCD_LISTEN_IP=${ALL_IPS[$i]}/g" /root/kube-install.sh # 修改ETCD_LISTEN_IP配置
-    sed -i "46c KUBE_API_SERVER=${ALL_IPS[$i]}:8080 # kubernetes API server" /root/kube-install.sh
+    sed -i "46c KUBE_API_SERVER=${ALL_IPS[$i]}:6443 # kubernetes API server" /root/kube-install.sh
     sed -i "57c KUBE_MASTER_ADDRESS=${ALL_IPS[$i]} # 当前master节点监听的ip地址" /root/kube-install.sh
     
     print_time_and_string "脚本文件复制到${ALL_IPS[$i]}"
